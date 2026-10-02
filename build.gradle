@@ -69,3 +69,11 @@ fabricApi {
         enableClientGameTests = true
     }
 }
+
+// Fabric's test-only network synchronizer can deadlock world loading on CI.
+// Minecraft networking and all gameplay assertions remain enabled.
+loom.runs.clientGameTest {
+    if (System.getenv('CI') != null) {
+        vmArg '-Dfabric.client.gametest.disableNetworkSynchronizer=true'
+    }
+}
