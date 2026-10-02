@@ -4,251 +4,228 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.screens.ChatScreen;
-import net.minecraft.client.gui.screens.DeathScreen;
-import net.minecraft.client.gui.screens.PauseScreen;
-import net.minecraft.client.gui.screens.inventory.InventoryScreen;
-import net.minecraft.network.chat.Component;
-import net.minecraft.resources.Identifier;
-import net.minecraft.util.Mth;
-import net.minecraft.world.entity.Pose;
-import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.phys.Vec3;
-import net.neoforged.bus.api.EventPriority;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.neoforge.client.event.ClientTickEvent;
-import net.neoforged.neoforge.client.event.InputEvent.InteractionKeyMappingTriggered;
-import net.neoforged.neoforge.client.event.RenderFrameEvent;
-import net.neoforged.neoforge.client.event.RenderGuiLayerEvent;
-import net.neoforged.neoforge.client.event.ScreenEvent;
-import net.neoforged.neoforge.event.tick.PlayerTickEvent;
+import net.fabricmc.api.EnvType;
+import net.fabricmc.api.Environment;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.screen.ChatScreen;
+import net.minecraft.client.render.RenderTickCounter;
+import net.minecraft.entity.effect.StatusEffectInstance;
+import net.minecraft.entity.effect.StatusEffects;
+import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.text.Text;
+import net.minecraft.util.Identifier;
+import net.minecraft.util.math.MathHelper;
+import net.minecraft.util.math.Vec3d;
 import team.creative.creativecore.common.util.mc.TooltipUtils;
-import team.creative.playerrevive.PlayerRevive;
+import team.creative.playerrevive.PlayerReviveFabric;
 import team.creative.playerrevive.api.IBleeding;
-import team.creative.playerrevive.mixin.LocalPlayerAccessor;
-import team.creative.playerrevive.mixin.MinecraftAccessor;
+import team.creative.playerrevive.mixin.GameRendererAccessor;
 import team.creative.playerrevive.packet.GiveUpPacket;
 import team.creative.playerrevive.packet.StartSelfRevivePacket;
 import team.creative.playerrevive.server.PlayerReviveServer;
 
+@Environment(EnvType.CLIENT)
 public class ReviveEventClient {
-    
-    public static Minecraft mc = Minecraft.getInstance();
-    
+
+    private static final Identifier BLUR_SHADER = Identifier.of(PlayerReviveFabric.MODID, "blur");
+    public static MinecraftClient mc = MinecraftClient.getInstance();
+
+    public static TensionSound sound;
+
     public static UUID helpTarget;
     public static boolean helpActive = false;
+    public static boolean inPauseScreen = false;
+
+    // Reusable list to avoid per-frame allocation
+    private final List<Text> hudLines = new ArrayList<>(4);
+
+    public static void register() {
+        ReviveEventClient instance = new ReviveEventClient();
+        ClientTickEvents.END_CLIENT_TICK.register(instance::clientTick);
+        HudRenderCallback.EVENT.register(instance::renderHud);
+    }
+
+    public static void render(DrawContext graphics, List<Text> list) {
+        int space = 15;
+        int centerX = mc.getWindow().getScaledWidth() / 2;
+        int centerY = mc.getWindow().getScaledHeight() / 2;
+        for (int i = 0; i < list.size(); i++) {
+            String text = list.get(i).getString();
+            int textWidth = mc.textRenderer.getWidth(text);
+            graphics.drawText(mc.textRenderer, text,
+                    centerX - textWidth / 2,
+                    centerY + ((list.size() / 2) * space - space * (i + 1)),
+                    0xFFFFFFFF, true);
+        }
+    }
+
+    public boolean lastShader = false;
     public boolean lastHighTension = false;
-    
-    private static TensionSound sound;
-    
+
     private boolean addedEffect = false;
     private int giveUpTimer = 0;
-    private boolean inPauseScreen = false;
-    
-    public static void render(GuiGraphics graphics, List<Component> list) {
-        int space = 15;
-        int width = 0;
-        for (int i = 0; i < list.size(); i++) {
-            String text = list.get(i).getString();
-            width = Math.max(width, mc.font.width(text) + 10);
+
+    public void clientTick(MinecraftClient client) {
+        PlayerEntity player = client.player;
+        if (player == null || !player.isAlive()) {
+            giveUpTimer = 0;
+            return;
         }
-        
-        for (int i = 0; i < list.size(); i++) {
-            String text = list.get(i).getString();
-            graphics.drawString(mc.font, text, mc.getWindow().getGuiScaledWidth() / 2 - mc.font.width(text) / 2, mc.getWindow().getGuiScaledHeight() / 2 + ((list
-                    .size() / 2) * space - space * (i + 1)), -2039584);
-        }
-    }
-    
-    @SubscribeEvent
-    public void playerTick(PlayerTickEvent.Post event) {
-        IBleeding revive = PlayerReviveServer.getBleeding(event.getEntity());
-        if (revive.isBleeding())
-            event.getEntity().setPose(Pose.SWIMMING);
-    }
-    
-    @SubscribeEvent(priority = EventPriority.HIGHEST)
-    public void click(InteractionKeyMappingTriggered event) {
-        Player player = mc.player;
-        if (player != null) {
-            IBleeding revive = PlayerReviveServer.getBleeding(player);
-            if (revive.isBleeding())
-                event.setCanceled(true);
-        }
-    }
-    
-    @SubscribeEvent
-    public void screenOpen(ScreenEvent.Opening event) {
-        Player player = mc.player;
-        if (player != null) {
-            IBleeding revive = PlayerReviveServer.getBleeding(player);
-            if (!revive.isBleeding())
-                return;
-            if (event.getCurrentScreen() == null)
-                inPauseScreen = false;
-            if (PlayerRevive.CONFIG.bleeding.disableInventoryAccess && event.getNewScreen() instanceof InventoryScreen)
-                event.setCanceled(true);
-            else if (PlayerRevive.CONFIG.bleeding.disableChatAccess && event.getNewScreen() instanceof ChatScreen)
-                event.setCanceled(true);
-            else if (PlayerRevive.CONFIG.bleeding.disableAllGUIAccess && !(event.getNewScreen() instanceof DeathScreen)) {
-                if (event.getNewScreen() instanceof PauseScreen)
-                    inPauseScreen = true;
-                if (!inPauseScreen)
-                    event.setCanceled(true);
-            } else
-                inPauseScreen = true;
-        }
-    }
-    
-    @SubscribeEvent
-    public void clientTick(ClientTickEvent.Post event) {
-        
-        Player player = mc.player;
-        if (player != null) {
-            IBleeding revive = PlayerReviveServer.getBleeding(player);
-            
-            if (revive.isBleeding()) {
-                if (mc.options.keyAttack.isDown())
-                    if (giveUpTimer > PlayerRevive.CONFIG.bleeding.giveUpSeconds * 20) {
-                        PlayerRevive.NETWORK.sendToServer(new GiveUpPacket());
-                        giveUpTimer = 0;
-                    } else
-                        giveUpTimer++;
-                else
+
+        IBleeding revive = PlayerReviveServer.getBleeding(player);
+
+        if (revive.isBleeding()) {
+            if (client.options.attackKey.isPressed()) {
+                if (giveUpTimer > PlayerReviveFabric.CONFIG.bleeding.giveUpSeconds * 20) {
+                    PlayerReviveFabric.NETWORK.sendToServer(new GiveUpPacket());
                     giveUpTimer = 0;
-                
-                if (PlayerRevive.CONFIG.revive.selfRevive.enabled && mc.options.keyUse.isDown() && player.isHolding(x -> PlayerRevive.CONFIG.revive.selfRevive.item.is(player
-                        .level(), x)))
-                    PlayerRevive.NETWORK.sendToServer(new StartSelfRevivePacket());
-            } else
+                } else {
+                    giveUpTimer++;
+                }
+            } else {
                 giveUpTimer = 0;
-        }
-    }
-    
-    @SubscribeEvent
-    public void frameEvent(RenderFrameEvent.Pre event) {
-        Player player = mc.player;
-        if (player != null && PlayerRevive.CONFIG.revive.forceLookAt) {
-            IBleeding revive = PlayerReviveServer.getBleeding(player);
-            if (!revive.isBleeding() && helpActive) {
-                Player other = player.level().getPlayerByUUID(helpTarget);
+            }
+
+            if (PlayerReviveFabric.CONFIG.revive.selfRevive.enabled && client.options.useKey.isPressed() &&
+                    player.isHolding(stack -> PlayerReviveFabric.CONFIG.revive.selfRevive.item.is(player.getEntityWorld(), stack) &&
+                            stack.getCount() >= PlayerReviveFabric.CONFIG.revive.selfRevive.itemCount))
+                PlayerReviveFabric.NETWORK.sendToServer(new StartSelfRevivePacket());
+        } else {
+            giveUpTimer = 0;
+            if (helpActive && !client.options.useKey.isPressed()) {
+                PlayerReviveFabric.NETWORK.sendToServer(new team.creative.playerrevive.packet.CancelHelpPacket());
+                helpActive = false;
+                helpTarget = null;
+            }
+
+            // Force look at target when helping
+            if (PlayerReviveFabric.CONFIG.revive.forceLookAt && helpActive) {
+                PlayerEntity other = player.getEntityWorld().getPlayerByUuid(helpTarget);
                 if (other != null) {
-                    float partial = event.getPartialTick().getGameTimeDeltaPartialTick(false);
-                    Vec3 vec3 = player.getEyePosition(partial);
-                    Vec3 center = other.getPosition(partial);
+                    float partial = client.getRenderTickCounter().getTickProgress(false);
+                    Vec3d vec3 = player.getEyePos();
+                    Vec3d center = other.getLerpedPos(partial);
                     double d0 = center.x - vec3.x;
                     double d1 = center.y - vec3.y;
                     double d2 = center.z - vec3.z;
                     double d3 = Math.sqrt(d0 * d0 + d2 * d2);
-                    player.setXRot(Mth.wrapDegrees((float) (-(Mth.atan2(d1, d3) * 180.0F / (float) Math.PI))));
-                    player.setYRot(Mth.wrapDegrees((float) (Mth.atan2(d2, d0) * 180.0F / (float) Math.PI) - 90.0F));
-                    player.setYHeadRot(player.getYRot());
-                    player.xRotO = player.getXRot();
-                    player.yRotO = player.getYRot();
-                    player.yHeadRotO = player.yHeadRot;
-                    player.yBodyRot = player.yHeadRot;
-                    player.yBodyRotO = player.yBodyRot;
+                    player.setPitch(MathHelper.wrapDegrees((float) (-(MathHelper.atan2((float) d1, (float) d3) * 180.0F / (float) Math.PI))));
+                    player.setYaw(MathHelper.wrapDegrees((float) (MathHelper.atan2((float) d2, (float) d0) * 180.0F / (float) Math.PI) - 90.0F));
+                    player.headYaw = player.getYaw();
+                    player.lastPitch = player.getPitch();
+                    player.lastYaw = player.getYaw();
+                    player.lastHeadYaw = player.headYaw;
+                    player.bodyYaw = player.headYaw;
+                    player.lastBodyYaw = player.bodyYaw;
                 }
             }
         }
     }
-    
-    @SubscribeEvent
-    public void tick(RenderGuiLayerEvent.Post event) {
-        Player player = mc.player;
-        if (player != null) {
-            IBleeding revive = PlayerReviveServer.getBleeding(player);
-            
-            if (!revive.isBleeding()) {
-                lastHighTension = false;
-                
-                if (addedEffect) {
-                    ((LocalPlayerAccessor) player).setHandsBusy(false);
-                    addedEffect = false;
+
+    public void renderHud(DrawContext graphics, RenderTickCounter tickCounter) {
+        PlayerEntity player = mc.player;
+        if (player == null)
+            return;
+
+        IBleeding revive = PlayerReviveServer.getBleeding(player);
+
+        if (!revive.isBleeding() || !player.isAlive()) {
+            lastHighTension = false;
+            if (lastShader) {
+                ((GameRendererAccessor) mc.gameRenderer).setPostProcessorEnabled(false);
+                mc.gameRenderer.onCameraEntitySet(mc.getCameraEntity());
+                lastShader = false;
+            }
+
+            if (addedEffect) {
+                player.removeStatusEffect(StatusEffects.JUMP_BOOST);
+                addedEffect = false;
+            }
+
+            if (sound != null) {
+                mc.getSoundManager().stop(sound);
+                sound = null;
+            }
+
+            if (helpActive && !mc.options.hudHidden && mc.currentScreen == null) {
+                PlayerEntity other = player.getEntityWorld().getPlayerByUuid(helpTarget);
+                if (other != null) {
+                    IBleeding bleeding = PlayerReviveServer.getBleeding(other);
+                    hudLines.clear();
+                    hudLines.add(Text.translatable("playerrevive.gui.label.time_left", formatTime(bleeding.timeLeft())));
+                    hudLines.add(Text.literal("" + bleeding.getProgress() + "/" + PlayerReviveFabric.CONFIG.revive.requiredReviveProgress));
+                    render(graphics, hudLines);
                 }
-                
-                if (sound != null) {
-                    mc.getSoundManager().stop(sound);
-                    sound = null;
-                }
-                
-                if (helpActive && !mc.options.hideGui && mc.screen == null) {
-                    Player other = player.level().getPlayerByUUID(helpTarget);
-                    if (other != null) {
-                        List<Component> list = new ArrayList<>();
-                        IBleeding bleeding = PlayerReviveServer.getBleeding(other);
-                        list.add(Component.translatable("playerrevive.gui.label.time_left", formatTime(bleeding.timeLeft())));
-                        list.add(Component.literal("" + bleeding.getProgress() + "/" + PlayerRevive.CONFIG.revive.requiredReviveProgress));
-                        render(event.getGuiGraphics(), list);
+            }
+        } else {
+            if (!addedEffect) {
+                player.addStatusEffect(new StatusEffectInstance(StatusEffects.JUMP_BOOST, 0, -10));
+                addedEffect = true;
+            }
+            player.hurtTime = 0;
+
+            if (revive.timeLeft() < 400) {
+                if (!lastHighTension) {
+                    if (!PlayerReviveFabric.CONFIG.disableMusic) {
+                        if (sound != null)
+                            mc.getSoundManager().stop(sound);
+                        sound = new TensionSound(Identifier.of(PlayerReviveFabric.MODID, "hightension"), PlayerReviveFabric.CONFIG.countdownMusicVolume, 1.0F, false);
+                        mc.getSoundManager().play(sound);
                     }
+                    lastHighTension = true;
                 }
             } else {
-                player.setPose(Pose.SWIMMING);
-                ((LocalPlayerAccessor) player).setHandsBusy(true);
-                ((MinecraftAccessor) mc).setMissTime(2);
-                
-                player.hurtTime = 0;
-                
-                if (revive.timeLeft() < 400) {
-                    if (!lastHighTension) {
-                        if (!PlayerRevive.CONFIG.disableMusic) {
-                            if (sound != null)
-                                mc.getSoundManager().stop(sound);
-                            sound = new TensionSound(Identifier.tryBuild(PlayerRevive.MODID, "hightension"), PlayerRevive.CONFIG.countdownMusicVolume, 1.0F, false);
-                            mc.getSoundManager().play(sound);
-                        }
-                        lastHighTension = true;
-                        
+                if (!lastShader) {
+                    if (sound != null)
+                        mc.getSoundManager().stop(sound);
+                    if (!PlayerReviveFabric.CONFIG.disableMusic) {
+                        sound = new TensionSound(Identifier.of(PlayerReviveFabric.MODID, "tension"), PlayerReviveFabric.CONFIG.bleedingMusicVolume, 1.0F, true);
+                        mc.getSoundManager().play(sound);
                     }
-                } else {
-                    if (!addedEffect) {
-                        if (sound != null) {
-                            mc.getSoundManager().stop(sound);
-                            sound = null;
-                        }
-                        if (!PlayerRevive.CONFIG.disableMusic) {
-                            sound = new TensionSound(Identifier.tryBuild(PlayerRevive.MODID, "tension"), PlayerRevive.CONFIG.bleedingMusicVolume, 1.0F, true);
-                            mc.getSoundManager().play(sound);
-                        }
-                    }
-                }
-                
-                addedEffect = true;
-                
-                if (PlayerRevive.CONFIG.bleeding.hasShaderEffect)
-                    mc.gameRenderer.processBlurEffect();
-                
-                if (!mc.options.hideGui && mc.screen == null) {
-                    List<Component> list = new ArrayList<>();
-                    IBleeding bleeding = PlayerReviveServer.getBleeding(player);
-                    list.add(Component.translatable("playerrevive.gui.label.time_left", formatTime(bleeding.timeLeft())));
-                    list.add(Component.literal("" + TooltipUtils.print(bleeding.getProgress()) + "/" + PlayerRevive.CONFIG.revive.requiredReviveProgress));
-                    list.add(Component.translatable("playerrevive.gui.give_up.hold", mc.options.keyAttack.getKey().getDisplayName(),
-                        ((PlayerRevive.CONFIG.bleeding.giveUpSeconds * 20 - giveUpTimer) / 20) + 1));
-                    
-                    if (PlayerRevive.CONFIG.revive.selfRevive.enabled)
-                        list.add(Component.translatable("playerrevive.gui.self_revive.hold", PlayerRevive.CONFIG.revive.selfRevive.item.description()));
-                    render(event.getGuiGraphics(), list);
                 }
             }
-            
+
+            if (PlayerReviveFabric.CONFIG.bleeding.hasShaderEffect) {
+                if (mc.gameRenderer.getPostProcessorId() == null) {
+                    ((GameRendererAccessor) mc.gameRenderer).invokeLoadPostProcessor(BLUR_SHADER);
+                    ((GameRendererAccessor) mc.gameRenderer).setPostProcessorEnabled(true);
+                    lastShader = true;
+                } else if (!((GameRendererAccessor) mc.gameRenderer).getPostProcessorEnabled()) {
+                    ((GameRendererAccessor) mc.gameRenderer).setPostProcessorEnabled(true);
+                    lastShader = true;
+                }
+            }
+
+            if (!mc.options.hudHidden && (mc.currentScreen == null || mc.currentScreen instanceof ChatScreen)) {
+                hudLines.clear();
+                hudLines.add(Text.translatable("playerrevive.gui.label.time_left", formatTime(revive.timeLeft())));
+                hudLines.add(Text.literal("" + TooltipUtils.print(revive.getProgress()) + "/" + PlayerReviveFabric.CONFIG.revive.requiredReviveProgress));
+                hudLines.add(Text.translatable("playerrevive.gui.give_up.hold", mc.options.attackKey.getBoundKeyLocalizedText(),
+                        ((PlayerReviveFabric.CONFIG.bleeding.giveUpSeconds * 20 - giveUpTimer) / 20) + 1));
+
+                if (PlayerReviveFabric.CONFIG.revive.selfRevive.enabled)
+                    hudLines.add(Text.translatable("playerrevive.gui.self_revive.hold", PlayerReviveFabric.CONFIG.revive.selfRevive.itemCount,
+                            PlayerReviveFabric.CONFIG.revive.selfRevive.item.description()));
+                render(graphics, hudLines);
+            }
         }
     }
-    
+
     public String formatTime(int timeLeft) {
-        int lengthOfMinute = 20 * 60;
-        int lengthOfHour = lengthOfMinute * 60;
-        
-        int hours = timeLeft / lengthOfHour;
-        timeLeft -= hours * lengthOfHour;
-        
-        int minutes = timeLeft / lengthOfMinute;
-        timeLeft -= minutes * lengthOfMinute;
-        
         int seconds = timeLeft / 20;
-        return String.format("%02d:%02d:%02d", hours, minutes, seconds);
+        int hours = seconds / 3600;
+        int minutes = (seconds % 3600) / 60;
+        seconds = seconds % 60;
+        StringBuilder sb = new StringBuilder(8);
+        if (hours < 10) sb.append('0');
+        sb.append(hours).append(':');
+        if (minutes < 10) sb.append('0');
+        sb.append(minutes).append(':');
+        if (seconds < 10) sb.append('0');
+        sb.append(seconds);
+        return sb.toString();
     }
-    
 }

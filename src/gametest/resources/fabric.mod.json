@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "playerrevive-tests",
+  "version": "1.0.0",
+  "environment": "*",
+  "entrypoints": {
+    "fabric-gametest": ["team.creative.playerrevive.ReviveGameTests"],
+    "fabric-client-gametest": ["team.creative.playerrevive.ReviveClientTest"]
+  }
+}

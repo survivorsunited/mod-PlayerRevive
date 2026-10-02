@@ -1,8 +1,1 @@
-{
-    "pack": {
-        "description": "PlayerRevive resources",
-        "min_format": 50,
-        "max_format": 75,
-        "forge:data_pack_format": 94
-    }
-}
+{"pack":{"description":"PlayerRevive resources","pack_format":75,"supported_formats":[75,75],"min_format":75,"max_format":75}}

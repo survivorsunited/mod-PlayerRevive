@@ -4,124 +4,144 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
-import net.minecraft.core.RegistryAccess;
-import net.minecraft.core.registries.Registries;
-import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.damagesource.DamageSource;
-import net.minecraft.world.entity.Pose;
-import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.level.storage.ValueInput;
-import net.minecraft.world.level.storage.ValueOutput;
-import team.creative.playerrevive.PlayerRevive;
-import team.creative.playerrevive.api.CombatTrackerClone;
+import net.minecraft.entity.EntityPose;
+import net.minecraft.entity.attribute.EntityAttributeModifier;
+import net.minecraft.entity.attribute.EntityAttributes;
+import net.minecraft.nbt.NbtCompound;
+import net.minecraft.registry.DynamicRegistryManager;
+import net.minecraft.registry.RegistryKeys;
+import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.util.Identifier;
+import net.minecraft.entity.damage.DamageSource;
+import net.minecraft.entity.player.PlayerEntity;
+import team.creative.playerrevive.PlayerReviveFabric;
+import team.creative.playerrevive.api.DamageTrackerClone;
 import team.creative.playerrevive.api.IBleeding;
+import team.creative.playerrevive.api.event.PlayerReviveEvents;
 import team.creative.playerrevive.packet.HelperPacket;
 
 public class Bleeding implements IBleeding {
-    
+
+    private static final Identifier JUMP_HEIGHT = Identifier.of(PlayerReviveFabric.MODID, "stopjump");
+
     private boolean bleeding;
     private float progress;
     private int timeLeft;
     private int downedTime;
-    
+
     private DamageSource lastSource;
-    private CombatTrackerClone trackerClone;
+    private DamageTrackerClone trackerClone;
     private boolean itemConsumed = false;
-    
+
     private boolean selfReviving = false;
-    
-    public final List<Player> revivingPlayers = new ArrayList<>();
-    
+
+    public final List<PlayerEntity> revivingPlayers = new ArrayList<>();
+
     public Bleeding() {}
-    
+
     @Override
-    public void tick(Player player) {
-        if (player.getPose() != Pose.SWIMMING)
-            player.setForcedPose(Pose.SWIMMING);
-        for (Iterator<Player> iterator = revivingPlayers.iterator(); iterator.hasNext();) {
-            Player helper = iterator.next();
-            if (helper.distanceTo(player) > PlayerRevive.CONFIG.revive.maxDistance) {
-                PlayerRevive.NETWORK.sendToClient(new HelperPacket(null, false), (ServerPlayer) helper);
+    public void tick(PlayerEntity player) {
+        if (player.getPose() != EntityPose.SWIMMING)
+            player.setPose(EntityPose.SWIMMING);
+        // Pose is maintained by mixin canceling updatePose() while bleeding
+        for (Iterator<PlayerEntity> iterator = revivingPlayers.iterator(); iterator.hasNext();) {
+            PlayerEntity helper = iterator.next();
+            if (helper.distanceTo(player) > PlayerReviveFabric.CONFIG.revive.maxDistance) {
+                PlayerReviveEvents.fireReviveCancel(helper, player);
+                PlayerReviveFabric.NETWORK.sendToClient(new HelperPacket(null, false), (ServerPlayerEntity) helper);
                 iterator.remove();
             }
         }
-        //player.setPose(Pose.SWIMMING);
-        if (revivingPlayers.isEmpty() || !PlayerRevive.CONFIG.revive.haltBleedTime)
+        if (revivingPlayers.isEmpty() || !PlayerReviveFabric.CONFIG.revive.haltBleedTime)
             timeLeft--;
-        if (revivingPlayers.isEmpty() && PlayerRevive.CONFIG.revive.resetProgress && !selfReviving)
+        if (revivingPlayers.isEmpty() && PlayerReviveFabric.CONFIG.revive.resetProgress && !selfReviving)
             progress = 0;
-        
-        progress += revivingPlayers.size() * PlayerRevive.CONFIG.revive.progressPerPlayer;
+
+        progress += revivingPlayers.size() * PlayerReviveFabric.CONFIG.revive.progressPerPlayer;
         if (selfReviving)
-            progress += PlayerRevive.CONFIG.revive.selfRevive.progress;
+            progress += PlayerReviveFabric.CONFIG.revive.selfRevive.progress;
         downedTime++;
-        
-        if (PlayerRevive.CONFIG.revive.exhaustion > 0)
+
+        if (PlayerReviveFabric.CONFIG.revive.exhaustion > 0)
             for (int i = 0; i < revivingPlayers.size(); i++)
-                revivingPlayers.get(i).causeFoodExhaustion(PlayerRevive.CONFIG.revive.exhaustion);
+                revivingPlayers.get(i).getHungerManager().addExhaustion(PlayerReviveFabric.CONFIG.revive.exhaustion);
     }
-    
+
     @Override
     public void forceBledOut() {
         bleeding = true;
         timeLeft = 0;
     }
-    
+
     @Override
     public int downedTime() {
         return downedTime;
     }
-    
+
     @Override
     public float getProgress() {
         return progress;
     }
-    
+
     @Override
     public boolean revived() {
-        return progress >= PlayerRevive.CONFIG.revive.requiredReviveProgress;
+        return progress >= PlayerReviveFabric.CONFIG.revive.requiredReviveProgress;
     }
-    
+
     @Override
     public boolean bledOut() {
         return bleeding && timeLeft <= 0;
     }
-    
+
     @Override
-    public void serialize(ValueOutput output) {
-        output.putInt("timeLeft", timeLeft);
-        output.putFloat("progress", progress);
-        output.putBoolean("bleeding", bleeding);
-        output.putBoolean("consumed", itemConsumed);
-        output.putBoolean("selfRevive", selfReviving);
+    public NbtCompound serializeNBT() {
+        NbtCompound nbt = new NbtCompound();
+        nbt.putInt("timeLeft", timeLeft);
+        nbt.putInt("downedTime", downedTime);
+        nbt.putFloat("progress", progress);
+        nbt.putBoolean("bleeding", bleeding);
+        nbt.putBoolean("consumed", itemConsumed);
+        nbt.putBoolean("selfRevive", selfReviving);
+        return nbt;
     }
-    
+
     @Override
-    public void deserialize(ValueInput input) {
-        timeLeft = input.getIntOr("timeLeft", 0);
-        progress = input.getFloatOr("progress", 0);
-        bleeding = input.getBooleanOr("bleeding", false);
-        itemConsumed = input.getBooleanOr("consumed", false);
-        selfReviving = input.getBooleanOr("selfRevive", false);
+    public void deserializeNBT(NbtCompound nbt) {
+        timeLeft = nbt.getInt("timeLeft", 0);
+        downedTime = nbt.getInt("downedTime", 0);
+        progress = nbt.getFloat("progress", 0);
+        bleeding = nbt.getBoolean("bleeding", false);
+        itemConsumed = nbt.getBoolean("consumed", false);
+        selfReviving = nbt.getBoolean("selfRevive", false);
     }
-    
+
     @Override
     public boolean isBleeding() {
         return bleeding;
     }
-    
+
     @Override
-    public void knockOut(Player player, DamageSource source) {
+    public void knockOut(PlayerEntity player, DamageSource source) {
         this.bleeding = true;
         this.progress = 0;
         this.downedTime = 0;
-        this.timeLeft = PlayerRevive.CONFIG.bleeding.bleedTime;
+        this.timeLeft = PlayerReviveFabric.CONFIG.bleeding.bleedTime;
+        this.itemConsumed = false;
+        this.selfReviving = false;
+        this.revivingPlayers.clear();
         this.lastSource = source;
-        this.trackerClone = new CombatTrackerClone(player.getCombatTracker());
+        this.trackerClone = new DamageTrackerClone(player.getDamageTracker());
+        restoreEffects(player);
     }
-    
+
+    public void restoreEffects(PlayerEntity player) {
+        var jump = player.getAttributeInstance(EntityAttributes.JUMP_STRENGTH);
+        if (bleeding && PlayerReviveFabric.CONFIG.bleeding.disableJump && jump != null && !jump.hasModifier(JUMP_HEIGHT))
+            jump.addTemporaryModifier(new EntityAttributeModifier(JUMP_HEIGHT, -1, EntityAttributeModifier.Operation.ADD_MULTIPLIED_TOTAL));
+    }
+
     @Override
-    public void revive() {
+    public void revive(PlayerEntity player) {
         this.bleeding = false;
         this.progress = 0;
         this.timeLeft = 0;
@@ -130,45 +150,47 @@ public class Bleeding implements IBleeding {
         this.trackerClone = null;
         this.itemConsumed = false;
         this.selfReviving = false;
+        if (player.getAttributeInstance(EntityAttributes.JUMP_STRENGTH) != null)
+            player.getAttributeInstance(EntityAttributes.JUMP_STRENGTH).removeModifier(JUMP_HEIGHT);
     }
-    
+
     @Override
     public int timeLeft() {
         return timeLeft;
     }
-    
+
     @Override
-    public List<Player> revivingPlayers() {
+    public List<PlayerEntity> revivingPlayers() {
         return revivingPlayers;
     }
-    
+
     @Override
-    public CombatTrackerClone getTrackerClone() {
+    public DamageTrackerClone getTrackerClone() {
         return trackerClone;
     }
-    
+
     @Override
-    public DamageSource getSource(RegistryAccess access) {
+    public DamageSource getSource(DynamicRegistryManager access) {
         if (lastSource != null)
             return lastSource;
-        return new DamageSource(access.lookupOrThrow(Registries.DAMAGE_TYPE).getOrThrow(PlayerRevive.BLED_TO_DEATH));
+        return new DamageSource(access.getOrThrow(RegistryKeys.DAMAGE_TYPE).getEntry(PlayerReviveFabric.BLED_TO_DEATH.getValue()).orElseThrow());
     }
-    
+
     @Override
     public boolean isItemConsumed() {
         return itemConsumed;
     }
-    
+
     @Override
     public void setItemConsumed() {
         itemConsumed = true;
     }
-    
+
     @Override
     public void startSelfRevive() {
         selfReviving = true;
     }
-    
+
     @Override
     public boolean isSelfReviving() {
         return selfReviving;

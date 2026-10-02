@@ -1,0 +1,13 @@
+{
+	"required": true,
+	"package": "team.creative.playerrevive.mixin",
+	"compatibilityLevel": "JAVA_21",
+	"client": [
+		"GameRendererAccessor",
+		"MinecraftClientMixin",
+		"MinecraftClientScreenMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}
