@@ -58,7 +58,7 @@ public class ReviveEventClient {
             graphics.drawText(mc.textRenderer, text,
                     centerX - textWidth / 2,
                     centerY + ((list.size() / 2) * space - space * (i + 1)),
-                    0xFFFFFF, true);
+                    0xFFFFFFFF, true);
         }
     }
 
