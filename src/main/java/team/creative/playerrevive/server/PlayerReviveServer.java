@@ -127,7 +127,7 @@ public class PlayerReviveServer {
         for (ServerPlayerEntity member : player.getEntityWorld().getServer().getPlayerManager().getPlayerList()) {
             IBleeding revive = getBleeding(member);
             if (revive.revivingPlayers().contains(player)) {
-                PlayerReviveEvents.fireReviveCancel(player, member);
+                cancelHelper(member, player);
                 revive.revivingPlayers().remove(player);
             }
         }

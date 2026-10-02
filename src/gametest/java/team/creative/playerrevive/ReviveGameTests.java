@@ -65,6 +65,8 @@ public class ReviveGameTests {
         context.assertEquals(restored.timeLeft(), PlayerReviveFabric.CONFIG.bleeding.bleedTime - 1, "Countdown must survive reload");
         context.assertEquals(restored.downedTime(), 1, "Damage grace period must survive reload");
         context.assertTrue(player.getDataTracker().get(PlayerReviveServer.BLEEDING_TRACKER), "Reload must restore tracked state");
+        context.assertEquals(player.getAttributeValue(net.minecraft.entity.attribute.EntityAttributes.JUMP_STRENGTH), 0.0,
+                "Downed players must remain unable to jump after reloading");
         restored.getSource(player.getRegistryManager());
         context.complete();
     }

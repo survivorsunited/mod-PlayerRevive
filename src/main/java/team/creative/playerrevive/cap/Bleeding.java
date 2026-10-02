@@ -131,9 +131,13 @@ public class Bleeding implements IBleeding {
         this.revivingPlayers.clear();
         this.lastSource = source;
         this.trackerClone = new DamageTrackerClone(player.getDamageTracker());
-        if (PlayerReviveFabric.CONFIG.bleeding.disableJump)
-            player.getAttributeInstance(EntityAttributes.JUMP_STRENGTH).addTemporaryModifier(
-                    new EntityAttributeModifier(JUMP_HEIGHT, -1, EntityAttributeModifier.Operation.ADD_MULTIPLIED_TOTAL));
+        restoreEffects(player);
+    }
+
+    public void restoreEffects(PlayerEntity player) {
+        var jump = player.getAttributeInstance(EntityAttributes.JUMP_STRENGTH);
+        if (bleeding && PlayerReviveFabric.CONFIG.bleeding.disableJump && jump != null && !jump.hasModifier(JUMP_HEIGHT))
+            jump.addTemporaryModifier(new EntityAttributeModifier(JUMP_HEIGHT, -1, EntityAttributeModifier.Operation.ADD_MULTIPLIED_TOTAL));
     }
 
     @Override

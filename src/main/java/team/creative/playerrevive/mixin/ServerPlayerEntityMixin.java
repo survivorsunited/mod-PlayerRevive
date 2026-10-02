@@ -66,6 +66,7 @@ public class ServerPlayerEntityMixin implements PlayerExtender {
             Bleeding bleeding = new Bleeding();
             bleeding.deserializeNBT(nbt);
             ((BleedingHolder) player).playerrevive$setBleeding(bleeding);
+            bleeding.restoreEffects(player);
             player.getDataTracker().set(PlayerReviveServer.BLEEDING_TRACKER, bleeding.isBleeding());
         });
     }
