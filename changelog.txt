@@ -1,3 +1,10 @@
+2.1.2
+Added count config to revive item and self revive item
+Added option to block jumping while bleeding (enabled by default)
+
+2.1.1
+Added start, cancel and complete revive events
+
 2.1.0
 Added self revive (which is disabled by default)
 Added config option teammatesOnly (which only allows you to revive players of the same team or the teams you are allied to)
@@ -19,12 +26,10 @@ Changed bleedingMessageTrackingOnly comment (suggested by @Eric-01)
 Added bleedingMessageTrackingOnly comment
 
 2.0.32
-tr_tr.json Turkish Localization
-Added disableAllGUIAccess option (disabled by default)
-Fixed disconnect from game when bleeding by switching from invalid blobs2 to blur shader
+Added tr_tr.json Turkish Localization (thanks to RuyaSavascisi)
 
 2.0.31
-Fixed crash when launching the game
+Added disableAllGUIAccess option (disabled by default)
 
 2.0.30
 Added disableInventoryAccess, disableChatAccess and disableServerCommands (all are disabled by default)
